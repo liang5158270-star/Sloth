@@ -43,10 +43,27 @@
 @property (weak) IBOutlet NSTableView *filtersTableView;
 @property (weak) IBOutlet NSButton *removeFilterButton;
 @property (weak) IBOutlet NSButton *addFilterButton;
+@property (weak) IBOutlet NSPopUpButton *autoRefreshDisclosureModePopUp;
 
 @end
 
 @implementation SettingsController
+
+- (void)syncAutoRefreshDisclosureModePopUp {
+    NSString *mode = [DEFAULTS stringForKey:@"autoRefreshDisclosureMode"];
+    if ([mode length] == 0) {
+        mode = @"Keep";
+    }
+
+    for (NSMenuItem *item in [self.autoRefreshDisclosureModePopUp itemArray]) {
+        if ([[item identifier] isEqualToString:mode]) {
+            [self.autoRefreshDisclosureModePopUp selectItem:item];
+            return;
+        }
+    }
+
+    [self.autoRefreshDisclosureModePopUp selectItemAtIndex:0];
+}
 
 - (void)windowDidLoad {
     [super windowDidLoad];
@@ -59,6 +76,7 @@
     for (NSArray *a in [DEFAULTS objectForKey:@"filters"]) {
         [filters addObject:[a mutableCopy]];
     }
+    [self syncAutoRefreshDisclosureModePopUp];
     [self updateRemoveFilterButtonStatus];
 }
 
@@ -97,6 +115,15 @@
     }
     
     [self.filtersTableView reloadData];
+    [self syncAutoRefreshDisclosureModePopUp];
+}
+
+- (IBAction)autoRefreshDisclosureModeChanged:(id)sender {
+    NSString *mode = [[self.autoRefreshDisclosureModePopUp selectedItem] identifier];
+    if ([mode length] == 0) {
+        mode = @"Keep";
+    }
+    [DEFAULTS setObject:mode forKey:@"autoRefreshDisclosureMode"];
 }
 
 #pragma mark - Filters UI
