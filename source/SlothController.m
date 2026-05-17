@@ -190,7 +190,6 @@
                             @"searchFilterCaseSensitive",
                             @"searchFilterRegex",
                             @"updateInterval",
-                            @"autoRefreshDisclosureMode",
                             @"showPathBar"
                           ]) {
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self
@@ -335,7 +334,7 @@
         return;
     }
     
-    // 为自动刷新保留用户上下文：选中项、滚动位置、展开状态
+    // 为自动刷新保留用户上下文：选中项、滚动位置
     NSIndexSet *selectedRows = [outlineView selectedRowIndexes];
     id selectedItem = nil;
     if ([selectedRows count] == 1) {
@@ -346,7 +345,6 @@
     if (topVisibleRow < 0) {
         topVisibleRow = NSNotFound;
     }
-    NSArray<NSString *> *expandedProcessIDs = [self expandedRootItemIdentifiers];
 
     // Filter content
     NSInteger matchingFilesCount = 0;
@@ -376,26 +374,10 @@
     
     if (contentChanged) {
         [outlineView reloadData];
-
-        if (lastRefreshWasAutomatic) {
-            // 自动刷新展开策略（可配置）：Expand / Collapse / Keep
-            NSString *mode = [DEFAULTS stringForKey:@"autoRefreshDisclosureMode"];
-            if ([mode isEqualToString:@"Expand"]) {
-                [outlineView expandItem:nil expandChildren:YES];
-            } else if ([mode isEqualToString:@"Collapse"]) {
-                [outlineView collapseItem:nil collapseChildren:YES];
-            } else {
-                // Keep：尽量恢复刷新前的展开状态
-                [self restoreExpandedRootItems:expandedProcessIDs];
-            }
-        } else {
-            if ([DEFAULTS boolForKey:@"disclosure"]) {
-                [outlineView expandItem:nil expandChildren:YES];
-            } else {
-                [outlineView collapseItem:nil collapseChildren:YES];
-            }
-        }
     }
+
+    // 所有刷新路径都使用同一个展开状态（包括 content 未变化时）
+    [self applyDisclosureState];
 
     if (lastRefreshWasAutomatic) {
         // 自动刷新后恢复选中和可见区域，避免“跳动感”
@@ -427,44 +409,6 @@
         return [NSString stringWithFormat:@"P:%@", pid];
     }
     return [NSString stringWithFormat:@"F:%@:%@", pid, name];
-}
-
-- (NSArray<NSString *> *)expandedRootItemIdentifiers {
-    // 只记录根节点（进程）展开状态，子项由根节点展开自动覆盖
-    NSMutableArray<NSString *> *ids = [NSMutableArray new];
-    NSInteger rows = [outlineView numberOfRows];
-    for (NSInteger row = 0; row < rows; row++) {
-        id item = [outlineView itemAtRow:row];
-        if ([outlineView parentForItem:item] != nil) {
-            continue;
-        }
-        if ([outlineView isItemExpanded:item]) {
-            NSString *itemID = [self identifierForOutlineItem:item];
-            if ([itemID length]) {
-                [ids addObject:itemID];
-            }
-        }
-    }
-    return ids;
-}
-
-- (void)restoreExpandedRootItems:(NSArray<NSString *> *)expandedIDs {
-    // 根据刷新前快照恢复根节点展开态
-    NSArray<NSString *> *ids = (expandedIDs != nil) ? expandedIDs : @[];
-    NSSet<NSString *> *expandedSet = [NSSet setWithArray:ids];
-    NSInteger rows = [outlineView numberOfRows];
-    for (NSInteger row = 0; row < rows; row++) {
-        id item = [outlineView itemAtRow:row];
-        if ([outlineView parentForItem:item] != nil) {
-            continue;
-        }
-        NSString *itemID = [self identifierForOutlineItem:item];
-        if ([expandedSet containsObject:itemID]) {
-            [outlineView expandItem:item];
-        } else {
-            [outlineView collapseItem:item];
-        }
-    }
 }
 
 - (NSInteger)rowForIdentifier:(NSString *)identifier {
@@ -997,12 +941,19 @@
 
 #pragma mark - Disclosure
 
-- (IBAction)disclosureChanged:(id)sender {
+- (void)applyDisclosureState {
+    if ([outlineView numberOfRows] == 0) {
+        return;
+    }
     if ([DEFAULTS boolForKey:@"disclosure"]) {
         [outlineView expandItem:nil expandChildren:YES];
     } else {
         [outlineView collapseItem:nil collapseChildren:YES];
     }
+}
+
+- (IBAction)disclosureChanged:(id)sender {
+    [self applyDisclosureState];
     [self updateDiscloseControl];
 }
 
