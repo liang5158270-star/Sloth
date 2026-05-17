@@ -347,7 +347,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#exit 0\n# Ruthlessly strip all included binaries and sign them\n# Only do this for release builds so CI testing works\nif [ \"${CODE_SIGNING_REQUIRED}\" != \"YES\" ]; then\n  exit 0\nfi\n\n\nLOCATION1=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater\"\nLOCATION2=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate\"\nLOCATION3=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader\"\nLOCATION4=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework\"\nLOCATION5=\"${BUILT_PRODUCTS_DIR}/Sloth.app\"\nLOCATION6=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer\"\n\n\nIDENTITY=\"16A0188A9D74911B21953A33684437F70902BC30\"\n#${EXPANDED_CODE_SIGN_IDENTITY_NAME}\n\n#echo $IDENTITY\n\n# Sparkle Updater binary\nstrip -x -S \"$LOCATION1\"\ncodesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$LOCATION1\"\n# Sparkle Autoupdate binary\nstrip -x -S \"$LOCATION2\"\ncodesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$LOCATION2\"\n# Sparkle Downloader binary\nstrip -x -S \"$LOCATION3\"\ncodesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$LOCATION3\"\n# Sparkle framework binary\nstrip -x -S $LOCATION4/Versions/Current/Sparkle\ncodesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$LOCATION4\"\n# Sloth app binary\nstrip -x $LOCATION5/Contents/MacOS/Sloth\ncodesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$LOCATION5\"\n# Sparkle Installer binary\nstrip -x -S \"$LOCATION6\"\ncodesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$LOCATION6\"\n";
+			shellScript = "#!/bin/sh\n# Strip and sign embedded binaries for distribution builds.\nif [ \"${CONFIGURATION}\" != \"Release\" ] && [ \"${ACTION}\" != \"install\" ] && [ \"${ACTION}\" != \"archive\" ]; then\n  exit 0\nfi\n\nIDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY}\"\nif [ -z \"$IDENTITY\" ] || [ \"$IDENTITY\" = \"-\" ]; then\n  echo \"warning: No valid code signing identity resolved; skipping custom Strip and Sign script\"\n  exit 0\nfi\n\nLOCATION1=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/Current/Updater.app/Contents/MacOS/Updater\"\nLOCATION2=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/Current/Autoupdate\"\nLOCATION3=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/Current/XPCServices/Downloader.xpc/Contents/MacOS/Downloader\"\nLOCATION4=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework\"\nLOCATION5=\"${BUILT_PRODUCTS_DIR}/Sloth.app\"\nLOCATION6=\"${BUILT_PRODUCTS_DIR}/Sloth.app/Contents/Frameworks/Sparkle.framework/Versions/Current/XPCServices/Installer.xpc/Contents/MacOS/Installer\"\n\nfor BIN in \"$LOCATION1\" \"$LOCATION2\" \"$LOCATION3\" \"$LOCATION6\" \"$LOCATION4/Versions/Current/Sparkle\" \"$LOCATION5/Contents/MacOS/Sloth\"; do\n  if [ -f \"$BIN\" ]; then\n    strip -x -S \"$BIN\" || exit 1\n  else\n    echo \"warning: Missing expected binary for stripping: $BIN\"\n  fi\ndone\n\nfor SIGN_TARGET in \"$LOCATION1\" \"$LOCATION2\" \"$LOCATION3\" \"$LOCATION6\" \"$LOCATION4\" \"$LOCATION5\"; do\n  if [ -e \"$SIGN_TARGET\" ]; then\n    codesign --verbose --force -o runtime --deep --sign \"$IDENTITY\" \"$SIGN_TARGET\" || exit 1\n  else\n    echo \"warning: Missing expected code sign target: $SIGN_TARGET\"\n  fi\ndone\n";
 		};
 		F4F1D89E1C761F8F00945D3E /* Set CFBundleVersion */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -401,13 +401,11 @@
 				CLANG_WARN_NULLABLE_TO_NONNULL_CONVERSION = YES;
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEPLOYMENT_POSTPROCESSING = NO;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=macosx*]" = 5WX26Y89JP;
+				DEVELOPMENT_TEAM = JAGJVBNP2X;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_TESTABILITY = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -425,7 +423,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 11.5;
 				MARKETING_VERSION = 3.4;
 				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = org.sveinbjorn.Sloth;
+				PRODUCT_BUNDLE_IDENTIFIER = org.sveinbjorn.Sloth.liull;
 				PRODUCT_NAME = Sloth;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
@@ -442,14 +440,12 @@
 				CLANG_WARN_NULLABLE_TO_NONNULL_CONVERSION = YES;
 				CODE_SIGN_ENTITLEMENTS = resources/Sloth.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = YES;
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = YES;
 				DEAD_CODE_STRIPPING = YES;
 				DEPLOYMENT_POSTPROCESSING = YES;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=macosx*]" = 5WX26Y89JP;
+				DEVELOPMENT_TEAM = JAGJVBNP2X;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_TESTABILITY = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -467,7 +463,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 11.5;
 				MARKETING_VERSION = 3.4;
 				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = org.sveinbjorn.Sloth;
+				PRODUCT_BUNDLE_IDENTIFIER = org.sveinbjorn.Sloth.liull;
 				PRODUCT_NAME = Sloth;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;

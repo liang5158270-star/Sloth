@@ -82,6 +82,10 @@
     AuthorizationRef _Nullable authRef;
     BOOL authenticated;
     BOOL isRefreshing;
+    // 记录最近一次刷新是否由自动定时器触发（用于区分 UI 行为）
+    BOOL lastRefreshWasAutomatic;
+    // 自动刷新成功完成的时间戳（用于状态栏显示）
+    NSDate * _Nullable lastAutoRefreshDate;
     
     NSTimer * _Nullable filterTimer;
     NSTimer * _Nullable updateTimer;
@@ -186,6 +190,7 @@
                             @"searchFilterCaseSensitive",
                             @"searchFilterRegex",
                             @"updateInterval",
+                            @"autoRefreshDisclosureMode",
                             @"showPathBar"
                           ]) {
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self
@@ -246,22 +251,28 @@
         return;
     }
     isRefreshing = YES;
-    [numItemsTextField setStringValue:@"Refreshing..."];
-    [outlineView deselectAll:self];
+    // sender 是 NSTimer 时，说明本次刷新由自动刷新触发
+    BOOL isAutomaticRefresh = [sender isKindOfClass:[NSTimer class]];
+    lastRefreshWasAutomatic = isAutomaticRefresh;
     
-    // Disable controls
-    [refreshButton setEnabled:NO];
-    [outlineView setEnabled:NO];
-    [outlineView setAlphaValue:0.5];
-    [authenticateButton setEnabled:NO];
-    
-    // Center progress indicator and set it off
-    CGFloat x = (NSWidth([window.contentView bounds]) - NSWidth([progressIndicator frame])) / 2;
-    CGFloat y = (NSHeight([window.contentView bounds]) - NSHeight([progressIndicator frame])) / 2;
-    [progressIndicator setFrameOrigin:NSMakePoint(x,y)];
-    [progressIndicator setAutoresizingMask:NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin | NSViewMaxYMargin];
-    [progressIndicator setUsesThreadedAnimation:TRUE];
-    [progressIndicator startAnimation:self];
+    if (!isAutomaticRefresh) {
+        // 手动刷新保留原有「加载中」体验
+        [numItemsTextField setStringValue:@"Refreshing..."];
+        [outlineView deselectAll:self];
+        
+        // Manual refresh keeps explicit loading feedback
+        [refreshButton setEnabled:NO];
+        [outlineView setEnabled:NO];
+        [outlineView setAlphaValue:0.5];
+        [authenticateButton setEnabled:NO];
+        
+        CGFloat x = (NSWidth([window.contentView bounds]) - NSWidth([progressIndicator frame])) / 2;
+        CGFloat y = (NSHeight([window.contentView bounds]) - NSHeight([progressIndicator frame])) / 2;
+        [progressIndicator setFrameOrigin:NSMakePoint(x,y)];
+        [progressIndicator setAutoresizingMask:NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin | NSViewMaxYMargin];
+        [progressIndicator setUsesThreadedAnimation:TRUE];
+        [progressIndicator startAnimation:self];
+    }
     
     // Run lsof asynchronously in the background, so interface doesn't lock up
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
@@ -275,12 +286,16 @@
                 self.unfilteredContent = items;
                 self.totalFileCount = fileCount;
                 self->isRefreshing = NO;
-                // Re-enable controls
-                [self->progressIndicator stopAnimation:self];
-                [self->outlineView setEnabled:YES];
-                [self->outlineView setAlphaValue:1.0];
-                [self->refreshButton setEnabled:YES];
-                [self->authenticateButton setEnabled:YES];
+                // 仅自动刷新记录时间，用于在底部文案显示“Auto-updated at xx:xx:xx”
+                self->lastAutoRefreshDate = isAutomaticRefresh ? [NSDate date] : nil;
+                if (!isAutomaticRefresh) {
+                    // Re-enable controls when manual refresh completes
+                    [self->progressIndicator stopAnimation:self];
+                    [self->outlineView setEnabled:YES];
+                    [self->outlineView setAlphaValue:1.0];
+                    [self->refreshButton setEnabled:YES];
+                    [self->authenticateButton setEnabled:YES];
+                }
                 // Filter results
                 [self updateFiltering];
             });
@@ -320,9 +335,25 @@
         return;
     }
     
+    // 为自动刷新保留用户上下文：选中项、滚动位置、展开状态
+    NSIndexSet *selectedRows = [outlineView selectedRowIndexes];
+    id selectedItem = nil;
+    if ([selectedRows count] == 1) {
+        selectedItem = [outlineView itemAtRow:[selectedRows firstIndex]];
+    }
+    NSString *selectedID = [self identifierForOutlineItem:selectedItem];
+    NSInteger topVisibleRow = [outlineView rowAtPoint:[[outlineView enclosingScrollView].contentView bounds].origin];
+    if (topVisibleRow < 0) {
+        topVisibleRow = NSNotFound;
+    }
+    NSArray<NSString *> *expandedProcessIDs = [self expandedRootItemIdentifiers];
+
     // Filter content
     NSInteger matchingFilesCount = 0;
-    self.content = [self filterContent:self.unfilteredContent numberOfMatchingFiles:&matchingFilesCount];
+    NSMutableArray<Item *> *newContent = [self filterContent:self.unfilteredContent numberOfMatchingFiles:&matchingFilesCount];
+    // 只有数据真的变化时才触发 reload，减少闪动
+    BOOL contentChanged = ![self.content isEqualToArray:newContent];
+    self.content = newContent;
     
     // Update outline view header
     [self updateProcessCountHeader];
@@ -332,15 +363,153 @@
     if (matchingFilesCount == self.totalFileCount) {
         str = [NSString stringWithFormat:@"Showing all %ld items", (long)self.totalFileCount];
     }
+    if (lastRefreshWasAutomatic) {
+        // 自动刷新采用“轻状态提示 + 时间戳”，不显示 Loading
+        NSString *timeString = [self autoRefreshTimeString:lastAutoRefreshDate];
+        if ([timeString length]) {
+            str = [NSString stringWithFormat:@"%@ | Auto-updated at %@", str, timeString];
+        } else {
+            str = [NSString stringWithFormat:@"%@ | Auto-updated", str];
+        }
+    }
     [numItemsTextField setStringValue:str];
     
-    [outlineView reloadData];
-    
-    if ([DEFAULTS boolForKey:@"disclosure"]) {
-        [outlineView expandItem:nil expandChildren:YES];
-    } else {
-        [outlineView collapseItem:nil collapseChildren:YES];
+    if (contentChanged) {
+        [outlineView reloadData];
+
+        if (lastRefreshWasAutomatic) {
+            // 自动刷新展开策略（可配置）：Expand / Collapse / Keep
+            NSString *mode = [DEFAULTS stringForKey:@"autoRefreshDisclosureMode"];
+            if ([mode isEqualToString:@"Expand"]) {
+                [outlineView expandItem:nil expandChildren:YES];
+            } else if ([mode isEqualToString:@"Collapse"]) {
+                [outlineView collapseItem:nil collapseChildren:YES];
+            } else {
+                // Keep：尽量恢复刷新前的展开状态
+                [self restoreExpandedRootItems:expandedProcessIDs];
+            }
+        } else {
+            if ([DEFAULTS boolForKey:@"disclosure"]) {
+                [outlineView expandItem:nil expandChildren:YES];
+            } else {
+                [outlineView collapseItem:nil collapseChildren:YES];
+            }
+        }
     }
+
+    if (lastRefreshWasAutomatic) {
+        // 自动刷新后恢复选中和可见区域，避免“跳动感”
+        [self restoreSelectionWithIdentifier:selectedID fallbackRows:selectedRows];
+        if (topVisibleRow != NSNotFound && topVisibleRow < [outlineView numberOfRows]) {
+            [outlineView scrollRowToVisible:topVisibleRow];
+        }
+    }
+}
+
+- (NSString *)identifierForOutlineItem:(id)item {
+    // 生成稳定标识：进程按 PID，文件按 PID+路径名
+    // 这样刷新后即使对象实例变化，也能定位回同一逻辑项
+    id rep = [item respondsToSelector:@selector(representedObject)] ? [item representedObject] : item;
+    if (![rep isKindOfClass:[NSDictionary class]]) {
+        return nil;
+    }
+    NSDictionary *d = (NSDictionary *)rep;
+    NSString *type = d[@"type"];
+    NSString *pid = [d[@"pid"] description];
+    if (pid == nil) {
+        pid = @"";
+    }
+    NSString *name = d[@"name"];
+    if (name == nil) {
+        name = @"";
+    }
+    if ([type isEqualToString:@"Process"]) {
+        return [NSString stringWithFormat:@"P:%@", pid];
+    }
+    return [NSString stringWithFormat:@"F:%@:%@", pid, name];
+}
+
+- (NSArray<NSString *> *)expandedRootItemIdentifiers {
+    // 只记录根节点（进程）展开状态，子项由根节点展开自动覆盖
+    NSMutableArray<NSString *> *ids = [NSMutableArray new];
+    NSInteger rows = [outlineView numberOfRows];
+    for (NSInteger row = 0; row < rows; row++) {
+        id item = [outlineView itemAtRow:row];
+        if ([outlineView parentForItem:item] != nil) {
+            continue;
+        }
+        if ([outlineView isItemExpanded:item]) {
+            NSString *itemID = [self identifierForOutlineItem:item];
+            if ([itemID length]) {
+                [ids addObject:itemID];
+            }
+        }
+    }
+    return ids;
+}
+
+- (void)restoreExpandedRootItems:(NSArray<NSString *> *)expandedIDs {
+    // 根据刷新前快照恢复根节点展开态
+    NSArray<NSString *> *ids = (expandedIDs != nil) ? expandedIDs : @[];
+    NSSet<NSString *> *expandedSet = [NSSet setWithArray:ids];
+    NSInteger rows = [outlineView numberOfRows];
+    for (NSInteger row = 0; row < rows; row++) {
+        id item = [outlineView itemAtRow:row];
+        if ([outlineView parentForItem:item] != nil) {
+            continue;
+        }
+        NSString *itemID = [self identifierForOutlineItem:item];
+        if ([expandedSet containsObject:itemID]) {
+            [outlineView expandItem:item];
+        } else {
+            [outlineView collapseItem:item];
+        }
+    }
+}
+
+- (NSInteger)rowForIdentifier:(NSString *)identifier {
+    // 在当前可见数据中反查标识对应行
+    if ([identifier length] == 0) {
+        return NSNotFound;
+    }
+    NSInteger rows = [outlineView numberOfRows];
+    for (NSInteger row = 0; row < rows; row++) {
+        NSString *candidateID = [self identifierForOutlineItem:[outlineView itemAtRow:row]];
+        if ([candidateID isEqualToString:identifier]) {
+            return row;
+        }
+    }
+    return NSNotFound;
+}
+
+- (void)restoreSelectionWithIdentifier:(NSString *)selectedID fallbackRows:(NSIndexSet *)fallbackRows {
+    // 优先按稳定标识恢复单选；找不到时回退到仍有效的旧 row index
+    NSInteger row = [self rowForIdentifier:selectedID];
+    if (row != NSNotFound) {
+        [outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+        return;
+    }
+    NSIndexSet *safeRows = [fallbackRows indexesPassingTest:^BOOL(NSUInteger idx, BOOL *stop) {
+        return idx < (NSUInteger)[outlineView numberOfRows];
+    }];
+    if ([safeRows count]) {
+        [outlineView selectRowIndexes:safeRows byExtendingSelection:NO];
+    }
+}
+
+- (NSString *)autoRefreshTimeString:(NSDate *)date {
+    // 统一自动刷新时间格式，使用静态 formatter 避免反复创建对象
+    if (date == nil) {
+        return nil;
+    }
+    static NSDateFormatter *formatter = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        formatter = [NSDateFormatter new];
+        [formatter setTimeStyle:NSDateFormatterMediumStyle];
+        [formatter setDateStyle:NSDateFormatterNoStyle];
+    });
+    return [formatter stringFromDate:date];
 }
 
 // User typed in search filter

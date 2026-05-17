@@ -86,6 +86,8 @@
     [DEFAULTS setBool:YES forKey:@"friendlyProcessNames"];
     [DEFAULTS setBool:NO forKey:@"authenticateOnLaunch"];
     [DEFAULTS setBool:NO forKey:@"alwaysUseSigkill"];
+    // 自动刷新的展开策略恢复为默认值：Keep（保持当前展开状态）
+    [DEFAULTS setObject:@"Keep" forKey:@"autoRefreshDisclosureMode"];
     
     [DEFAULTS setObject:@[@[@NO, DEFAULT_FILTER]] forKey:@"filters"];
     

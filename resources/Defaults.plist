@@ -42,6 +42,8 @@
 	<false/>
 	<key>updateInterval</key>
 	<integer>0</integer>
+	<key>autoRefreshDisclosureMode</key>
+	<string>Keep</string>
 	<key>accessMode</key>
 	<string>Any</string>
 	<key>showPathBar</key>
